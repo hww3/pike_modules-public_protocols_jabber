@@ -1,3 +1,5 @@
+Version 1.1: Fix for newer/older versions of autoheader.
+
 Version 1.0: Initial Release of the Jabber Client module
 
 Supports Plaintext authentication, presence, roster management and 
