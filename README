@@ -1,0 +1,3 @@
+This module provides a client interface to a Jabber Server. This module 
+has been tested against jabberd 1.4x. For details, see this module's 
+reference documentation.

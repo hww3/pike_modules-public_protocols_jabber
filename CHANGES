@@ -1,0 +1,5 @@
+Version 1.0: Initial Release of the Jabber Client module
+
+Supports Plaintext authentication, presence, roster management and 
+send/receive messaging in an asynchronous environment using callbacks. 
+Connection using SSL is supported though largely untested.
