@@ -612,9 +612,9 @@ private void low_read_message(int id, string data)
 
   //
   // NOTE: we _assume_ that node is the stream container element
-  // and that node[0] is the ?xml element. we probably shouldn't do that.
+  // and that node[0] is the first element. we probably shouldn't do that.
   //
-  node[1]->iterate_children(low_low_read_message);
+  node[0]->iterate_children(low_low_read_message);
 
 }
 
