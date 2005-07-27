@@ -1,7 +1,7 @@
 //! A module for communicating using the Jabber Protocol
 
 //!
-constant __version = "1.1";
+constant __version = "1.2";
 constant __author  = "Bill Welliver <bill@welliver.org>";
 
 //!

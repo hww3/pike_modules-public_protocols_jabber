@@ -1,4 +1,4 @@
-# $Id: Makefile.in,v 1.1.1.1 2004-09-01 15:12:44 hww3 Exp $
+# $Id: Makefile.in,v 1.2 2005-07-27 21:39:23 hww3 Exp $
 @make_variables@
 VPATH=@srcdir@:
 OBJS=
@@ -11,3 +11,13 @@ CONFIG_HEADERS=@CONFIG_HEADERS@
 
 @dynamic_module_makefile@
 @dependencies@
+
+release:
+	cvs rtag -D now RELEASE_1_${MIN} pike_modules/Public_Protocols_Jabber
+	cvs export -d Public_Protocols_Jabber-1.${MIN} -r RELEASE_1_${MIN} pike_modules/Public_Protocols_Jabber
+	cd Public_Protocols_Jabber-1.${MIN} && \
+	pike -x module --autoheader && pike -x module --autoconf && \
+	rm -rf autom4*
+	gtar czvf Public_Protocols_Jabber-1.${MIN}.tar.gz Public_Protocols_Jabber-1.${MIN}
+
+
