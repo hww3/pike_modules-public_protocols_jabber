@@ -2,7 +2,7 @@
 AC_INIT(module.pmod.in/module.pmod)
 
 AC_MODULE_INIT()
-
+AC_CONFIG_HEADERS(jabber_config.h)
 AC_OUTPUT(Makefile)
 
 

@@ -2,14 +2,16 @@
 
 import Public.Protocols.Jabber;
 
-#define WERROR(X)
-#ifdef JABBER_DEBUG
+#if JABBER_DEBUG
 #define WERROR(X) werror("Jabber.client():" + X)
+#else
+#define WERROR(X)
 #endif
 
 //! Context for SSL connections
 SSL.context ssl_ctx;
 
+int is_background;
 string stream;
 string url;
 int sslcon=0;
@@ -21,19 +23,21 @@ string sessionid="";
 mapping presence=([]);
 mapping roster=([]);
 
-private object conn;
-private object messages=ADT.Queue();
+protected object conn;
+protected object messages=ADT.Queue();
 
-private function message_callback;
-private function subscribe_callback;
-private function unsubscribe_callback;
-private function subscribed_callback;
-private function unsubscribed_callback;
-private function presence_callback;
-private function disconnect_callback;
-private function roster_callback;
+protected function message_callback;
+protected function subscribe_callback;
+protected function unsubscribe_callback;
+protected function subscribed_callback;
+protected function unsubscribed_callback;
+protected function presence_callback;
+protected function disconnect_callback;
+protected function roster_callback;
 
-private string _client_name="PikeJabber";
+protected string _client_name="PikeJabber";
+
+protected string write_buf = "";
 
 //! sets the client name to be used in the connection to the Jabber server.
 //! defaults to "PikeJabber".
@@ -208,7 +212,7 @@ array get_messages()
   return m;
 }
 
-private array decode_url(string url) {
+protected array decode_url(string url) {
   string _prot,_server,_user,_password, tmp;
   int _port;
   int _use_ssl=0;
@@ -248,6 +252,10 @@ private array decode_url(string url) {
 }
 
 //! create a new client connection to server url, using a jabber url
+//! 
+//! following creation, there will be a connection to the server but
+//! the session will not yet be initiated. see @[begin] and @[authenticate]
+//!
 //! @param ctx
 //!   an optional context for an SSL connection to the Jabber server.  
 //!
@@ -260,12 +268,14 @@ void create(string url, void|SSL.context ctx)
   [_server, _port, _user, _password, _ssl]=decode_url(url);
 
     conn=Stdio.File();
+    WERROR(sprintf("connecting to %O on port %O\n", _server, _port));
     if(!conn->connect(_server, _port))
       error("unable to connect to jabber server at " + _server + " port " + 
       _port + ".");
 
   if(_ssl) // are we using ssl?
   {
+    WERROR("using ssl.\n");
     object _c;
     _c = conn;
 
@@ -274,7 +284,7 @@ void create(string url, void|SSL.context ctx)
 
     ssl_ctx = ctx;
 
-    conn = SSL.sslfile(_c, ctx, 1, 0);
+    conn = SSL.sslfile(_c, ctx, 1, 1);
     sslcon = 1;
   }
 
@@ -285,26 +295,59 @@ void create(string url, void|SSL.context ctx)
   server=_server;
   password=_password;
 
+}
+
+//! sets the jabber identity of the client.
+//! normally this information is automatically pulled from
+//! the jabber connect url, however in situations where the server
+//! name is different from the jabber domain name, this method
+//! may be used to specify the full jabber user identity.
+//!
+//! @param jabber_id
+//!   the jabber identity, in the form of username or username@somdomain
+void set_user_identity(string jabber_id)
+{
+  if(search(jabber_id, "@") == -1)
+  {
+    user = jabber_id;
+  }
+  else
+  {
+     sscanf(jabber_id, "%s@%s", user, server);
+  }
+
+  WERROR("USER set to " + user + ".\n");
+  WERROR("HOST set to " + host + ".\n");
+
+}
+
+//! creates a new jabber session and sets the mode to blocking.
+//! 
+void begin()
+{
   get_new_session();
 
   set_background_mode(1);
 }
 
-private void conn_closed()
+protected void conn_closed()
 {
   if(disconnect_callback)
     call_function(disconnect_callback);
 }
 
-private string make_stream(string s)
+protected string make_stream(string s)
 {
-   return stream + s + "</stream:stream>\n";
+  if(search(s, "</stream:stream>") == -1)
+    s = s + "</stream:stream>";
+  if(search(s, "<stream:stream") == -1)
+    s = stream + s;
+  return s;
 }
 
-private int|string check_for_autherrors(string s)
+protected int|string check_for_autherrors(string s)
 {
   object node;
-  mixed e;
 
   node=Parser.XML.NSTree->parse_input(s);
   _auth_error=0;
@@ -317,46 +360,41 @@ private int|string check_for_autherrors(string s)
   
 }
 
-private object|string check_for_errors(string s)
+protected object|string check_for_errors(string s)
 {
   object node;
   mixed e;
-  e=catch(node=Parser.XML.NSTree->parse_input(make_stream(s)));
+  s = make_stream(s);
+  e=catch(
+    node=Parser.XML.NSTree.parse_input(s)
+  );
+
+//werror("tree: " + Parser.XML.NSTree.visualize(node));
   if(e)
   {
-    WERROR("found error.\n");
-    node=Parser.XML.NSTree->parse_input(stream + s);
-    if(node->walk_inorder(low_checkforerrors)==Parser.XML.NSTree.STOP_WALK)
-      return _error;
+    WERROR(sprintf("error parsing %O %O.\n", e[0], (s)));
+    return e[0];
   }
-
-
-  // what's the first tag?
-  foreach(node->get_children(), object n)
-    if(n->get_tag_name()=="stream")
-      if(n[0]->get_tag_name()=="error")
-      {
-         return n[0]->get_children()[0]->get_text();
-      }
-
-  return node;  
   
+  if(node->walk_preorder(low_checkforerrors)==Parser.XML.NSTree.STOP_WALK)
+      return _error;
+  return node;
 }
 
 private string _error;
 
-private void|int low_checkforerrors(object node)
+protected void|int low_checkforerrors(object node)
 {
   if(node->get_tag_name()=="error")
   {
-    _error=node->value_of_node();
+    _error= node->value_of_node();
     return Parser.XML.NSTree.STOP_WALK; 
   }
 }
 
 private int _auth_error;
 
-private void|int low_checkforautherrors(object node)
+protected void|int low_checkforautherrors(object node)
 {
   if(node->get_tag_name()=="iq" && node->get_attributes()->type!="error")
   {
@@ -365,7 +403,7 @@ private void|int low_checkforautherrors(object node)
 
   if(node->get_tag_name()=="error")
   {
-    _error=node->value_of_node();
+    _error= node->value_of_node();
     _auth_error=1;
     return Parser.XML.NSTree.STOP_WALK; 
   }
@@ -495,7 +533,6 @@ int set_presence(int show, string|void status, int|void priority)
 //! authentication information is not provided.
 void authenticate(string|void u, string|void p)
 {
-
   set_background_mode(0);
 
   if(!(u && p)) // we should use the gleaned information.
@@ -514,14 +551,14 @@ void authenticate(string|void u, string|void p)
 
   string rslt=conn->read(2048,1);
 
-  WERROR(rslt+"\n\n");
+//  werror("read1: " + rslt+"\n\n");
   mixed e=check_for_errors(rslt);
   if(stringp(e))
     error("Received error: " + e + "\n");
   object node=e;
 //  object node=Parser.XML.NSTree->parse_input(make_stream(rslt));
 
-  WERROR(Parser.XML.NSTree->visualize(node));
+//  WERROR(Parser.XML.NSTree->visualize(node));
 
   msg="<iq id='auth2' type='set'>"
    "<query xmlns='jabber:iq:auth'>"
@@ -534,13 +571,14 @@ void authenticate(string|void u, string|void p)
   send_msg(msg);
 
   rslt=conn->read(2048,1);
-  WERROR(rslt+"\n\n");
+ // werror("read2: " + rslt+"\n\n");
 
-  catch(e=check_for_autherrors(rslt));
+  e=check_for_autherrors(rslt);
+
   if(e)
-    error("Received error: " + e + "\n");
+    error("Received error: %O\n", e);
 
-  set_background_mode(0);
+  set_background_mode(1);
 
 }
 
@@ -563,13 +601,19 @@ void get_new_session()
   send_msg(msg);
 
   string rslt=conn->read(2048,1);
-  object node=Parser.XML.NSTree->parse_input(rslt + "</stream:stream>");
+//  werror("read3: %O\n", rslt);  
+
+  object node;
+  mixed e = catch(
+    node = Parser.XML.NSTree->parse_input(rslt + "</stream:stream>")
+  );
+  if(e) { throw(Error.Generic(sprintf("error parsing stream: %O\n", rslt)));}
   parse_stream(node);
   stream=rslt;
   return;
 }
 
-private int low_parse_stream(object n)
+protected int low_parse_stream(object n)
 {
   if(n->get_tag_name()=="stream")
   {
@@ -580,29 +624,36 @@ private int low_parse_stream(object n)
   }
 }
 
-private void parse_stream(object n)
+protected void parse_stream(object n)
 {
   if(n->iterate_children(low_parse_stream) !=Parser.XML.NSTree.STOP_WALK) 
     error("Invalid stream received from server.\n");
 }
 
 
-//!
+//! sets the jabber client to optionally operate in callback mode
 void set_background_mode(int i)
 {
+  is_background = (i?1:0);
    if(i)
    {
       conn->set_nonblocking();
       conn->set_read_callback(low_read_message);
+      conn->set_write_callback(low_write_message);
    }
    else
    {
       conn->set_blocking();
+      if(write_buf && sizeof(write_buf))
+      {
+        conn->write(write_buf);
+        write_buf = "";
+      }
    }
 
 }
 
-private void low_read_message(int id, string data)
+protected void low_read_message(int id, string data)
 {
   WERROR("received *>>" + data + "<<*\n");
   mixed e=check_for_errors(data);
@@ -611,18 +662,23 @@ private void low_read_message(int id, string data)
   object node=e;
 
   //
-  // NOTE: we _assume_ that node is the stream container element
-  // and that node[0] is the first element. we probably shouldn't do that.
+  // NOTE: we _assume_ that the stream node is a child of the root.
+  // that may not be an assumption that holds universally.
   //
-  node[0]->iterate_children(low_low_read_message);
-
+//  werror("node: %O\n", Parser.XML.NSTree.visualize(node));
+  foreach(node->get_children();; mixed n)
+  {
+    if(n->get_tag_name() == "stream")
+      n->iterate_children(low_low_read_message);
+  }
 }
 
-private int low_low_read_message(object node)
+protected int low_low_read_message(object node)
 {
    string type=node->get_tag_name();
 
-WERROR("got " + type +"\n");
+   WERROR("got " + type +" message\n");
+
    if(type=="message") // we have a message incoming to us.
    {
       mapping msg=([]);
@@ -677,7 +733,7 @@ WERROR("got " + type +"\n");
    }
 }
 
-private int low_parse_message(object node, mapping msg)
+protected int low_parse_message(object node, mapping msg)
 {
     if(node->get_tag_name()=="html")
     {
@@ -692,13 +748,13 @@ private int low_parse_message(object node, mapping msg)
     return 1;
 }
 
-private int low_parse_presence(object node, mapping a)
+protected int low_parse_presence(object node, mapping a)
 {  
     if(node[0])
       a[node->get_tag_name()]=node[0]->get_text();
 }
 
-private int low_parse_iq(object node, mapping a)
+protected int low_parse_iq(object node, mapping a)
 {
 
     if(a->type=="result")
@@ -744,7 +800,7 @@ private int low_parse_iq(object node, mapping a)
 }
 
 
-private void handle_unsubscribe(string who)
+protected void handle_unsubscribe(string who)
 {
   int res;
   if(unsubscribe_callback)
@@ -755,7 +811,7 @@ private void handle_unsubscribe(string who)
     respond_subscribed(who);
 }
 
-private void handle_subscribe(string who)
+protected void handle_subscribe(string who)
 {
   int res;
   if(subscribe_callback)
@@ -766,7 +822,7 @@ private void handle_subscribe(string who)
     respond_unsubscribed(who);
 }
 
-private void handle_unsubscribed(string who)
+protected void handle_unsubscribed(string who)
 {
   if(unsubscribed_callback)
     unsubscribed_callback(who);
@@ -780,7 +836,7 @@ private void handle_unsubscribed(string who)
   WERROR("acknowledged subscription.\n");
 }
 
-private void handle_subscribed(string who)
+protected void handle_subscribed(string who)
 {
   if(subscribed_callback)
     subscribed_callback(who);
@@ -794,8 +850,27 @@ private void handle_subscribed(string who)
   WERROR("acknowledged subscription.\n");
 }
 
-private void send_msg(string msg)
+protected void low_write_message(mixed id)
 {
-  conn->write(msg);
+    int w = conn->write(write_buf);
+    if(w < sizeof(write_buf))
+      write_buf = write_buf[w..];
+    else write_buf = "";
+  WERROR("write " + w + " bytes of data.\n");
+}
+
+protected void send_msg(string msg)
+{
+  if(is_background)
+  {
+    write_buf += msg;
+    int w = conn->write(write_buf);
+    if(w < sizeof(write_buf))
+      write_buf = write_buf[w..];
+    else write_buf = "";
+    WERROR(sprintf("wrote %d, buf size %d\n", w, sizeof(write_buf)));
+  }
+  else
+    conn->write(msg);
   WERROR("sent : " + msg + "\n\n");
 }
