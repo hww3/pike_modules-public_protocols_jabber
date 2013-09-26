@@ -352,7 +352,7 @@ protected int|string check_for_autherrors(string s)
   node=Parser.XML.NSTree->parse_input(s);
   _auth_error=0;
   
-  if(node->walk_inorder(low_checkforautherrors)==Parser.XML.NSTree.STOP_WALK 
+  if(node->walk_preorder(low_checkforautherrors)==Parser.XML.NSTree.STOP_WALK 
     && _auth_error==1)
       return _error;
   _auth_error=0;
